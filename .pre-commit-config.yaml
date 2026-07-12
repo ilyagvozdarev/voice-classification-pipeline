@@ -1,0 +1,16 @@
+# pre-commit прогоняет эти проверки автоматически перед каждым git commit.
+# Установка (один раз):
+#     pip install pre-commit
+#     pre-commit install
+# Ручной прогон по всем файлам:
+#     pre-commit run --all-files
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.3
+    hooks:
+      # Линтер: проверяет и чинит безопасные проблемы (--fix).
+      - id: ruff
+        args: [--fix]
+      # Форматтер: приводит код к единому стилю (как black).
+      - id: ruff-format

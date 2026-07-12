@@ -1,0 +1,51 @@
+# GPU overlay. Apply ON TOP of the base file (order matters):
+#
+#     docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+#
+# It swaps each ML service to its CUDA Dockerfile and reserves an NVIDIA GPU.
+# Requires on the host: NVIDIA GPU + driver + NVIDIA Container Toolkit.
+# The app code auto-detects CUDA (torch.cuda.is_available()) and moves the
+# pipelines onto cuda:0 — no code change needed between CPU and GPU runs.
+#
+# NOTE: this is NOT named *.override.yml on purpose, so `docker compose up`
+# stays on CPU by default and GPU is opt-in via the explicit -f above.
+
+services:
+  asr:
+    build:
+      context: ./services/asr
+      dockerfile: Dockerfile.gpu
+    image: voice-ml/asr:gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  bert:
+    build:
+      context: ./services/bert
+      dockerfile: Dockerfile.gpu
+    image: voice-ml/bert:gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  llm:
+    build:
+      context: ./services/llm
+      dockerfile: Dockerfile.gpu
+    image: voice-ml/llm:gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

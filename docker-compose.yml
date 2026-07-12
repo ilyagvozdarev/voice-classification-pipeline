@@ -1,0 +1,99 @@
+name: voice-ml-pipeline
+
+x-common-env: &common-env
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  asr:
+    build: ./services/asr
+    image: voice-ml/asr
+    environment:
+      <<: *common-env
+      ASR_MODEL_NAME: ${ASR_MODEL_NAME:-openai/whisper-tiny}
+    ports:
+      - "8001:8000"
+    networks: [ml]
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
+
+  bert:
+    build: ./services/bert
+    image: voice-ml/bert
+    environment:
+      <<: *common-env
+      BERT_MODEL_NAME: ${BERT_MODEL_NAME:-distilbert-base-uncased-finetuned-sst-2-english}
+    ports:
+      - "8002:8000"
+    networks: [ml]
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
+
+  llm:
+    build: ./services/llm
+    image: voice-ml/llm
+    environment:
+      <<: *common-env
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-google/flan-t5-small}
+      LLM_MAX_NEW_TOKENS: ${LLM_MAX_NEW_TOKENS:-128}
+    ports:
+      - "8003:8000"
+    networks: [ml]
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
+
+  master:
+    build: ./services/master
+    image: voice-ml/master
+    environment:
+      <<: *common-env
+      ASR_URL: http://asr:8000
+      BERT_URL: http://bert:8000
+      LLM_URL: http://llm:8000
+      REQUEST_TIMEOUT_S: ${REQUEST_TIMEOUT_S:-120}
+    ports:
+      - "8000:8000"
+    networks: [ml]
+    depends_on:
+      asr:
+        condition: service_healthy
+      bert:
+        condition: service_healthy
+      llm:
+        condition: service_healthy
+
+  gradio:
+    build: ./services/gradio
+    image: voice-ml/gradio
+    environment:
+      <<: *common-env
+      MASTER_URL: http://master:8000
+    ports:
+      - "7860:7860"
+    networks: [ml]
+    depends_on:
+      - master
+
+networks:
+  ml:
+    driver: bridge
+
+volumes:
+  hf-cache:
