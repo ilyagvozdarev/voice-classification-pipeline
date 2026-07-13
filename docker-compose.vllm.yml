@@ -1,0 +1,28 @@
+# vLLM overlay for the LLM service. Apply ON TOP of the base file:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.vllm.yml up --build
+#
+# Swaps the llm service to the vLLM backend (Dockerfile.vllm) and reserves a
+# GPU. vLLM works best with causal/instruct models, so the default model is
+# switched to a small instruct model — override LLM_MODEL_NAME as needed.
+#
+# Requires on the host: NVIDIA GPU + driver + NVIDIA Container Toolkit.
+# The other services (asr/bert) stay on CPU here; combine with
+# docker-compose.gpu.yml if you want them on GPU too.
+
+services:
+  llm:
+    build:
+      context: ./services/llm
+      dockerfile: Dockerfile.vllm
+    image: voice-ml/llm:vllm
+    environment:
+      LLM_BACKEND: vllm
+      LLM_MODEL_NAME: ${LLM_MODEL_NAME:-Qwen/Qwen2.5-0.5B-Instruct}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

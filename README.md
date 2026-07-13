@@ -1,6 +1,7 @@
 # Voice ML Pipeline
 
-Микросервисный конвейер: аудио → распознавание речи → (тональность ‖ ответ LLM) → агрегация.
+Микросервисный конвейер для **multi-label классификации речи**:
+аудио → ASR → восстановление текста LLM → классификация (BERT ‖ LLM) → агрегация.
 Пять сервисов в `docker-compose`, одна сеть, обращение друг к другу по имени сервиса.
 
 ## Архитектура
@@ -17,39 +18,61 @@
                       │ 1) POST /transcribe
                       ▼
                  ┌──────────┐
-                 │   asr    │   whisper-tiny → текст
+                 │   asr    │   whisper-tiny → сырой текст
                  └────┬─────┘
-                      │ текст
-          ┌───────────┴───────────┐   2) параллельно (asyncio.gather)
-          ▼                       ▼
-     ┌──────────┐           ┌──────────┐
-     │   bert   │           │   llm    │
-     │ /classify│           │ /generate│
-     └────┬─────┘           └────┬─────┘
-          │ label/score          │ answer
-          └───────────┬──────────┘
-                      ▼   3) master агрегирует и возвращает в gradio
-              { transcript, sentiment, answer }
+                      │ transcript
+                      ▼  2) POST /generate  (промпт «восстановление»)
+                 ┌──────────┐
+                 │   llm    │   диаризация, восстановление, типы сообщений
+                 └────┬─────┘
+                      │ restored text
+          ┌───────────┴───────────────┐   3) параллельно (asyncio.gather)
+          ▼                           ▼
+     ┌──────────┐               ┌──────────┐
+     │   bert   │               │   llm    │  (промпт «классификация»)
+     │ /classify│               │ /generate│
+     │multi-label│              └────┬─────┘
+     └────┬─────┘                    │ llm_classification
+          │ bert_labels[]            │
+          └───────────┬──────────────┘
+                      ▼   4) master агрегирует и возвращает в gradio
+     { transcript, restored_text, bert_labels[], llm_classification }
 ```
+
+Ключевое: LLM вызывается **дважды** — сначала восстановление сырого транскрипта,
+потом классификация восстановленного текста (своим промптом). BERT классифицирует
+тот же восстановленный текст (multi-label). Оба результата уходят в gradio.
 
 ## Стек
 
 - **FastAPI** + **uvicorn** — каждый сервис
 - **Pydantic v2** / **pydantic-settings** — схемы запросов/ответов и конфиг из env
-- **asyncio** + **aiohttp** — master делает конкурентные вызовы к bert и llm
-- **transformers** (CPU torch) — реальные лёгкие модели
+- **asyncio** + **aiohttp** — master делает конкурентные вызовы (BERT ‖ LLM)
+- **transformers** (CPU) или **vLLM** (GPU) — бэкенд LLM переключается конфигом
+- **батчинг запросов в LLM** — `asyncio.Queue` + фоновый воркер + `Future` на запрос
 - **gradio** — фронтенд
+
+## Батчинг в LLM-сервисе
+
+LLM-сервис не гоняет модель по одному запросу. Входящие промпты кладутся в
+`asyncio.Queue`, а фоновый воркер собирает **батч** и прогоняет его одним вызовом:
+
+- батч уходит в модель, когда набралось `LLM_MAX_BATCH_SIZE` **или** прошло
+  `LLM_BATCH_TIMEOUT_MS` с первого запроса в пачке (что раньше);
+- каждый HTTP-запрос ждёт свой `Future`, который воркер резолвит после инференса.
+
+Код: [`batcher.py`](services/llm/app/batcher.py) (очередь + воркер) и
+[`backends.py`](services/llm/app/backends.py) (сменный бэкенд transformers/vLLM).
 
 ## Модели по умолчанию (лёгкие, CPU)
 
 | Сервис | Модель | Меняется через env |
 |--------|--------|--------------------|
 | asr  | `openai/whisper-tiny` | `ASR_MODEL_NAME` |
-| bert | `distilbert-base-uncased-finetuned-sst-2-english` | `BERT_MODEL_NAME` |
+| bert | `SamLowe/roberta-base-go_emotions` (multi-label, 28 меток) | `BERT_MODEL_NAME`, `BERT_THRESHOLD` |
 | llm  | `google/flan-t5-small` | `LLM_MODEL_NAME` |
 
-Веса скачиваются при первом старте и кэшируются в volume `hf-cache`, поэтому
-повторные запуски быстрые.
+Веса кэшируются в volume `hf-cache`, поэтому повторные запуски быстрые.
 
 ## Запуск
 
@@ -61,44 +84,47 @@ cp .env.example .env        # при желании отредактируй м�
 # CPU (по умолчанию)
 docker compose up --build
 
-# GPU (opt-in через второй -f)
+# GPU для asr/bert/llm через transformers-CUDA
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+
+# LLM на vLLM (GPU) — быстрый инференс
+docker compose -f docker-compose.yml -f docker-compose.vllm.yml up --build
 ```
 
 Первый старт качает веса моделей — health-check каждого ML-сервиса имеет
 `start_period: 120s`, master ждёт, пока все три станут healthy.
-Подробности про GPU — в разделе [ниже](#запуск-на-gpu-опционально).
 
 Открыть UI: <http://localhost:7860>
 
-## Запуск на GPU (опционально)
+## LLM на vLLM (опционально)
 
-По умолчанию всё считается на **CPU** (torch собран без CUDA). Для GPU есть
-оверлей `docker-compose.gpu.yml`, который накладывается поверх базового:
+Оверлей `docker-compose.vllm.yml` переключает **только llm-сервис** на бэкенд
+vLLM (`Dockerfile.vllm`), прокидывает GPU и меняет модель на causal/instruct
+(vLLM заточен под них):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.vllm.yml up --build
+```
+
+Переключение бэкенда — через env `LLM_BACKEND` (`transformers` | `vllm`); код
+сервиса один и тот же, различается только реализация бэкенда в `backends.py`.
+**Требования:** NVIDIA GPU + драйвер + NVIDIA Container Toolkit.
+
+## Запуск на GPU через transformers (опционально)
+
+Оверлей `docker-compose.gpu.yml` пересобирает asr/bert/llm по `Dockerfile.gpu`
+(torch с CUDA) и прокидывает GPU. Код сам определяет устройство через
+`torch.cuda.is_available()` и переносит пайплайны на `cuda:0`.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 ```
 
-Что делает оверлей:
-- пересобирает asr/bert/llm по `Dockerfile.gpu` (torch с CUDA, cu124);
-- добавляет `deploy.resources.reservations.devices` — прокидывает NVIDIA GPU в контейнер;
-- тегает образы как `voice-ml/*:gpu`, чтобы не затирать CPU-образы.
-
-Код менять не нужно: сервисы сами определяют устройство через
-`torch.cuda.is_available()` и переносят пайплайны на `cuda:0`. В логах при старте
-видно `device=cuda:0` (GPU) или `device=cpu`.
-
-**Требования на хосте:** NVIDIA GPU + драйвер + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
 Проверка, что GPU виден Docker:
 
 ```bash
 docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
 ```
-
-Без оверлея (`docker compose up`) всё остаётся на CPU — GPU строго opt-in.
-Файл называется `*.gpu.yml`, а не `*.override.yml`, поэтому автоматически он не
-подхватывается.
 
 ## Порты
 
@@ -107,26 +133,26 @@ docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
 | gradio | 7860 | 7860 | UI |
 | master | 8000 | 8000 | `POST /process`, `GET /health` |
 | asr    | 8000 | 8001 | `POST /transcribe` |
-| bert   | 8000 | 8002 | `POST /classify` |
-| llm    | 8000 | 8003 | `POST /generate` |
+| bert   | 8000 | 8002 | `POST /classify` (multi-label) |
+| llm    | 8000 | 8003 | `POST /generate` (принимает `prompt`) |
 
 Внутри сети сервисы ходят по именам: `http://asr:8000` и т.д.
 
 ## Проверка без gradio
 
 ```bash
-# ASR напрямую
+# ASR — файл → текст
 curl -F "audio=@sample.wav" http://localhost:8001/transcribe
 
-# BERT
+# BERT — multi-label классификация
 curl -X POST http://localhost:8002/classify \
-  -H "Content-Type: application/json" -d '{"text":"I love this"}'
+  -H "Content-Type: application/json" -d '{"text":"I love this, thank you so much!"}'
 
-# LLM
+# LLM — принимает готовый prompt
 curl -X POST http://localhost:8003/generate \
-  -H "Content-Type: application/json" -d '{"text":"What is the capital of France?"}'
+  -H "Content-Type: application/json" -d '{"prompt":"Classify: I am so happy today"}'
 
-# Весь конвейер
+# Весь конвейер (audio -> ASR -> restore -> BERT ‖ LLM)
 curl -F "audio=@sample.wav" http://localhost:8000/process
 ```
 
@@ -135,14 +161,11 @@ curl -F "audio=@sample.wav" http://localhost:8000/process
 ## Структура
 
 ```
-services/<name>/
-  app/
-    main.py       # FastAPI app + endpoints + lifespan
-    config.py     # pydantic-settings, env
-    schemas.py    # pydantic-модели запросов/ответов
-    model.py      # обёртка над HF-моделью (asr/bert/llm)
-    clients.py    # aiohttp-клиенты к downstream (только master)
-    client.py     # requests-клиент к master (только gradio)
-  Dockerfile
-  requirements.txt
+services/
+  asr/    app/{main,config,schemas,model}.py       — whisper → текст
+  bert/   app/{main,config,schemas,model}.py       — multi-label классификация
+  llm/    app/{main,config,schemas,backends,batcher}.py  — генерация + батчинг
+  master/ app/{main,config,schemas,prompts,clients}.py   — оркестрация + промпты
+  gradio/ app/{main,config,client}.py              — UI
+каждый сервис: Dockerfile (+ Dockerfile.gpu / Dockerfile.vllm), requirements.txt
 ```

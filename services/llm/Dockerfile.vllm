@@ -1,0 +1,17 @@
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HF_HUB_DISABLE_TELEMETRY=1
+
+WORKDIR /app
+
+# vLLM bundles its own CUDA torch build. The host must provide an NVIDIA GPU,
+# driver and the NVIDIA Container Toolkit (see docker-compose.vllm.yml).
+COPY requirements-vllm.txt .
+RUN pip install -r requirements-vllm.txt
+
+COPY app ./app
+
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

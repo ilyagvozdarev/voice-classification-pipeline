@@ -45,3 +45,7 @@ async def transcribe(audio: UploadFile = File(...)) -> TranscriptionResponse:
         ) from exc
 
     return TranscriptionResponse(text=text, model=settings.asr_model_name)
+
+
+# NOTE:
+# - transcribe в run_in_threadpool

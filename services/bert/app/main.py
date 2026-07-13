@@ -6,7 +6,7 @@ from fastapi.concurrency import run_in_threadpool
 
 from .config import settings
 from .model import bert_model
-from .schemas import ClassifyRequest, ClassifyResponse, HealthResponse
+from .schemas import ClassifyRequest, ClassifyResponse, HealthResponse, LabelScore
 
 logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger("bert")
@@ -32,11 +32,14 @@ async def classify(req: ClassifyRequest) -> ClassifyResponse:
         raise HTTPException(status_code=503, detail="Model not ready.")
 
     try:
-        label, score = await run_in_threadpool(bert_model.classify, req.text)
+        pairs = await run_in_threadpool(bert_model.classify, req.text)
     except Exception as exc:
         logger.exception("Classification failed")
         raise HTTPException(
             status_code=422, detail=f"Classification error: {exc}"
         ) from exc
 
-    return ClassifyResponse(label=label, score=score, model=settings.bert_model_name)
+    labels = [LabelScore(label=label, score=score) for label, score in pairs]
+    return ClassifyResponse(
+        labels=labels, threshold=settings.bert_threshold, model=settings.bert_model_name
+    )

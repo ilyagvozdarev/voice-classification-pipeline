@@ -27,7 +27,8 @@ services:
     image: voice-ml/bert
     environment:
       <<: *common-env
-      BERT_MODEL_NAME: ${BERT_MODEL_NAME:-distilbert-base-uncased-finetuned-sst-2-english}
+      BERT_MODEL_NAME: ${BERT_MODEL_NAME:-SamLowe/roberta-base-go_emotions}
+      BERT_THRESHOLD: ${BERT_THRESHOLD:-0.3}
     ports:
       - "8002:8000"
     networks: [ml]
@@ -46,7 +47,10 @@ services:
     environment:
       <<: *common-env
       LLM_MODEL_NAME: ${LLM_MODEL_NAME:-google/flan-t5-small}
-      LLM_MAX_NEW_TOKENS: ${LLM_MAX_NEW_TOKENS:-128}
+      LLM_MAX_NEW_TOKENS: ${LLM_MAX_NEW_TOKENS:-256}
+      LLM_BACKEND: ${LLM_BACKEND:-transformers}
+      LLM_MAX_BATCH_SIZE: ${LLM_MAX_BATCH_SIZE:-8}
+      LLM_BATCH_TIMEOUT_MS: ${LLM_BATCH_TIMEOUT_MS:-50}
     ports:
       - "8003:8000"
     networks: [ml]

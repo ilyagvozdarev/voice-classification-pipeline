@@ -40,9 +40,10 @@ def main() -> int:
         r = requests.post("http://localhost:8000/process", files=files, timeout=180)
     r.raise_for_status()
     data = r.json()
-    print(f"  transcript: {data['transcript']!r}")
-    print(f"  sentiment : {data['sentiment']}")
-    print(f"  answer    : {data['answer']!r}")
+    print(f"  transcript        : {data['transcript']!r}")
+    print(f"  restored_text     : {data['restored_text']!r}")
+    print(f"  bert_labels       : {data['bert_labels']}")
+    print(f"  llm_classification: {data['llm_classification']!r}")
     return 0
 
 
