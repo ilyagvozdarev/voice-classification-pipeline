@@ -1,1 +1,1 @@
-gh repo create https://github.com/ilyagvozdarev/voice-ml-pipeline.git --private --source=. --remote=origin --push
+gh repo create https://github.com/ilyagvozdarev/voice-classification-pipeline.git --private --source=. --remote=origin --push

@@ -49,9 +49,9 @@ def handle_audio(audio_path: str | None):
 
 def build_interface() -> gr.Blocks:
     """Build the gradio Blocks UI for the pipeline."""
-    with gr.Blocks(title="Voice ML Pipeline") as demo:
+    with gr.Blocks(title="Voice Classification Pipeline") as demo:
         gr.Markdown(
-            "# 🎙️ Voice ML Pipeline\n"
+            "# 🎙️ Voice Classification Pipeline\n"
             "Record or upload audio. It is transcribed (ASR), **restored** by "
             "the LLM (diarization, punctuation, message types), then classified "
             "two ways: multi-label by BERT and by the LLM."

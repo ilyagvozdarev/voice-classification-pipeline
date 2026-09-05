@@ -1,4 +1,4 @@
-name: voice-ml-pipeline
+name: voice-classification-pipeline
 
 x-common-env: &common-env
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -6,7 +6,7 @@ x-common-env: &common-env
 services:
   asr:
     build: ./services/asr
-    image: voice-ml/asr
+    image: voice-classification/asr
     environment:
       <<: *common-env
       ASR_MODEL_NAME: ${ASR_MODEL_NAME:-openai/whisper-tiny}
@@ -24,7 +24,7 @@ services:
 
   bert:
     build: ./services/bert
-    image: voice-ml/bert
+    image: voice-classification/bert
     environment:
       <<: *common-env
       BERT_MODEL_NAME: ${BERT_MODEL_NAME:-SamLowe/roberta-base-go_emotions}
@@ -43,7 +43,7 @@ services:
 
   llm:
     build: ./services/llm
-    image: voice-ml/llm
+    image: voice-classification/llm
     environment:
       <<: *common-env
       LLM_MODEL_NAME: ${LLM_MODEL_NAME:-google/flan-t5-small}
@@ -65,7 +65,7 @@ services:
 
   master:
     build: ./services/master
-    image: voice-ml/master
+    image: voice-classification/master
     environment:
       <<: *common-env
       ASR_URL: http://asr:8000
@@ -85,7 +85,7 @@ services:
 
   gradio:
     build: ./services/gradio
-    image: voice-ml/gradio
+    image: voice-classification/gradio
     environment:
       <<: *common-env
       MASTER_URL: http://master:8000

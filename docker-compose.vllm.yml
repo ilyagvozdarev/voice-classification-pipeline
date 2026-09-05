@@ -15,7 +15,7 @@ services:
     build:
       context: ./services/llm
       dockerfile: Dockerfile.vllm
-    image: voice-ml/llm:vllm
+    image: voice-classification/llm:vllm
     environment:
       LLM_BACKEND: vllm
       LLM_MODEL_NAME: ${LLM_MODEL_NAME:-Qwen/Qwen2.5-0.5B-Instruct}

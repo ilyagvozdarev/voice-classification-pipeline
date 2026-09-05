@@ -1,4 +1,4 @@
-# Voice ML Pipeline
+# Voice Classification Pipeline
 
 Микросервисный конвейер для **multi-label классификации речи**:
 аудио → ASR → восстановление текста LLM → классификация (BERT ‖ LLM) → агрегация.

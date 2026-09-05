@@ -15,7 +15,7 @@ services:
     build:
       context: ./services/asr
       dockerfile: Dockerfile.gpu
-    image: voice-ml/asr:gpu
+    image: voice-classification/asr:gpu
     deploy:
       resources:
         reservations:
@@ -28,7 +28,7 @@ services:
     build:
       context: ./services/bert
       dockerfile: Dockerfile.gpu
-    image: voice-ml/bert:gpu
+    image: voice-classification/bert:gpu
     deploy:
       resources:
         reservations:
@@ -41,7 +41,7 @@ services:
     build:
       context: ./services/llm
       dockerfile: Dockerfile.gpu
-    image: voice-ml/llm:gpu
+    image: voice-classification/llm:gpu
     deploy:
       resources:
         reservations:
