@@ -6,12 +6,7 @@ logger = logging.getLogger("bert.model")
 
 
 class BertClassifier:
-    """Multi-label text-classification pipeline wrapper (default: go_emotions).
-
-    Unlike single-label sentiment, a multi-label model applies a sigmoid per
-    label, so several labels can be "on" at once. We return every label whose
-    probability clears the configured threshold.
-    """
+    """Multi-label text-classification pipeline wrapper."""
 
     def __init__(self) -> None:
         self._pipe = None
@@ -26,8 +21,6 @@ class BertClassifier:
             settings.bert_model_name,
             "cuda:0" if device == 0 else "cpu",
         )
-        # top_k=None makes the pipeline return scores for ALL labels rather
-        # than just the top one — required for multi-label output.
         self._pipe = pipeline(
             "text-classification",
             model=settings.bert_model_name,
@@ -41,7 +34,8 @@ class BertClassifier:
         return self._pipe is not None
 
     def classify(self, text: str) -> list[tuple[str, float]]:
-        """Return (label, score) pairs above the threshold, sorted descending.
+        """
+        Return (label, score) pairs above the threshold, sorted descending.
 
         Parameters
         ----------
@@ -62,7 +56,6 @@ class BertClassifier:
         if self._pipe is None:
             raise RuntimeError("BERT model is not loaded yet.")
 
-        # With top_k=None the pipeline returns a list of {label, score} dicts.
         scores = self._pipe(text, truncation=True)[0]
         selected = [
             (item["label"], float(item["score"]))

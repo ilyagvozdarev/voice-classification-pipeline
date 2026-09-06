@@ -2,8 +2,6 @@ from pydantic import BaseModel, Field
 
 
 class TranscriptionResponse(BaseModel):
-    """Result of transcribing an uploaded audio file."""
-
     text: str = Field(..., description="Recognized text from the audio.")
     model: str = Field(..., description="Model that produced the transcription.")
 

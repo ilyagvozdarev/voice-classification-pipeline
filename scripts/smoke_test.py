@@ -1,12 +1,3 @@
-"""Minimal end-to-end check against the running stack.
-
-Usage:
-    python scripts/smoke_test.py path/to/sample.wav
-
-Hits master's /process (full pipeline) plus each service's /health. Requires
-the stack to be up (`docker compose up`).
-"""
-
 import sys
 
 import requests

@@ -11,14 +11,14 @@ logger = logging.getLogger("gradio")
 
 
 def _format_labels(labels: list[dict]) -> str:
-    """Render BERT multi-label output as one 'label 87%' line per label."""
     if not labels:
         return "(no labels above threshold)"
     return "\n".join(f"{item['label']}  {item['score']:.1%}" for item in labels)
 
 
 def handle_audio(audio_path: str | None):
-    """Send the recorded/uploaded audio to master and unpack the result.
+    """
+    Send the recorded/uploaded audio to master and unpack the result.
 
     Returns
     -------
@@ -48,10 +48,9 @@ def handle_audio(audio_path: str | None):
 
 
 def build_interface() -> gr.Blocks:
-    """Build the gradio Blocks UI for the pipeline."""
     with gr.Blocks(title="Voice Classification Pipeline") as demo:
         gr.Markdown(
-            "# 🎙️ Voice Classification Pipeline\n"
+            "# Voice Classification Pipeline\n"
             "Record or upload audio. It is transcribed (ASR), **restored** by "
             "the LLM (diarization, punctuation, message types), then classified "
             "two ways: multi-label by BERT and by the LLM."

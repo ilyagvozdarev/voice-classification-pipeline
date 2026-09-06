@@ -12,11 +12,7 @@ class DownstreamError(RuntimeError):
 
 
 class ServiceClients:
-    """Owns a single shared aiohttp session for all downstream calls.
-
-    One session (connection pool) is created on startup and reused, which is
-    the recommended aiohttp pattern — creating a session per request is costly.
-    """
+    """Owns a single shared aiohttp session (connection pool) for all downstream calls."""
 
     def __init__(self) -> None:
         self._session: aiohttp.ClientSession | None = None
@@ -53,7 +49,8 @@ class ServiceClients:
         return data["text"]
 
     async def classify_bert(self, text: str) -> list[dict]:
-        """Multi-label classification via the BERT service.
+        """
+        Multi-label classification via the BERT service.
 
         Returns
         -------
@@ -69,7 +66,7 @@ class ServiceClients:
         return data["labels"]
 
     async def generate(self, prompt: str) -> str:
-        """Send a fully-built prompt to the LLM service and return its text."""
+        """Send a prompt to the LLM service and return its completion."""
         payload = {"prompt": prompt}
         async with self.session.post(
             f"{settings.llm_url}/generate", json=payload

@@ -1,11 +1,3 @@
-"""Pluggable inference backends for the LLM service.
-
-Both backends expose the same tiny surface — ``load()`` and
-``generate_batch(prompts)`` — so the batching layer (see ``batcher.py``) does
-not care which one is in use. The active backend is chosen by
-``settings.llm_backend`` and swapped via a compose overlay, not code changes.
-"""
-
 import logging
 from typing import Protocol
 
@@ -15,23 +7,15 @@ logger = logging.getLogger("llm.backend")
 
 
 class Backend(Protocol):
-    """Minimal contract every inference backend must satisfy."""
-
     def load(self) -> None:
-        """Load weights / start the engine (blocking)."""
         ...
 
     def generate_batch(self, prompts: list[str], max_new_tokens: int) -> list[str]:
-        """Generate one completion per prompt, preserving order."""
         ...
 
 
 class TransformersBackend:
-    """CPU-friendly backend using a HF text2text pipeline (default flan-t5).
-
-    The HF pipeline natively accepts a list of prompts and runs them as a
-    batch, which is exactly what our batcher hands it.
-    """
+    """CPU-friendly backend using a HF text2text pipeline."""
 
     def __init__(self) -> None:
         self._pipe = None
@@ -61,7 +45,8 @@ class TransformersBackend:
 
 
 class VLLMBackend:
-    """GPU backend using vLLM. Best suited to causal/instruct models.
+    """
+    GPU backend using vLLM.
 
     vLLM already does continuous batching internally, but our application-level
     batcher still groups requests so a single ``generate`` call covers many
@@ -91,7 +76,6 @@ class VLLMBackend:
 
 
 def get_backend() -> Backend:
-    """Instantiate the backend selected by ``settings.llm_backend``."""
     if settings.llm_backend == "vllm":
         return VLLMBackend()
     if settings.llm_backend == "transformers":

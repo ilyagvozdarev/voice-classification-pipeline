@@ -10,22 +10,15 @@ logger = logging.getLogger("asr.model")
 
 
 class ASRModel:
-    """Thin wrapper around a HF automatic-speech-recognition pipeline.
-
-    Loading is deferred to `load()` so the FastAPI lifespan controls when the
-    (potentially slow) weight download / init happens.
-    """
 
     def __init__(self) -> None:
         self._pipe = None
 
     def load(self) -> None:
-        # Imported lazily so the module can be imported without torch present.
+        # Imported lazily
         import torch
         from transformers import pipeline
 
-        # Use GPU automatically when a CUDA build of torch sees a device;
-        # the CPU image reports False here and falls back to -1 (CPU).
         device = 0 if torch.cuda.is_available() else -1
         logger.info(
             "Loading ASR model: %s (device=%s)",
@@ -44,12 +37,12 @@ class ASRModel:
         return self._pipe is not None
 
     def transcribe(self, audio_bytes: bytes) -> str:
-        """Decode raw audio bytes and return the recognized text.
+        """
+        Decode raw audio bytes and return the recognized text.
 
         The bytes may be in any format libsndfile can read (WAV, FLAC, OGG,
         ...). Stereo input is downmixed to mono and converted to float32
-        before being passed to the ASR pipeline. Runs synchronously and is
-        CPU-bound, so callers on an event loop should offload it to a thread.
+        before being passed to the ASR.
 
         Parameters
         ----------
@@ -60,8 +53,8 @@ class ASRModel:
         Returns
         -------
         str
-            The transcribed text, stripped of surrounding whitespace. May be
-            an empty string if the model recognized no speech.
+            The transcribed text, stripped of surrounding whitespace. 
+            May be an empty string if the model recognized no speech.
 
         Raises
         ------

@@ -1,171 +1,126 @@
 # Voice Classification Pipeline
 
-Микросервисный конвейер для **multi-label классификации речи**:
-аудио → ASR → восстановление текста LLM → классификация (BERT ‖ LLM) → агрегация.
-Пять сервисов в `docker-compose`, одна сеть, обращение друг к другу по имени сервиса.
+Microservice pipeline for **multi-label speech classification**:
+audio -> ASR -> LLM text restoration -> classification (BERT || LLM) -> aggregation.
 
-## Архитектура
+
+## Architecture
+
+LLM is called twice: first to restore the raw transcript, then to classify the restored text (by prompt).
+BERT classifies the same restored text (multi-label). Both results are fed to gradio.
 
 ```
-                 ┌──────────┐
-  audio ───────▶ │  gradio  │   (UI: запись/загрузка аудио, порт 7860)
-                 └────┬─────┘
-                      │ POST /process (multipart audio)
-                      ▼
-                 ┌──────────┐
-                 │  master  │   (оркестратор, порт 8000)
-                 └────┬─────┘
-                      │ 1) POST /transcribe
-                      ▼
-                 ┌──────────┐
-                 │   asr    │   whisper-tiny → сырой текст
-                 └────┬─────┘
-                      │ transcript
-                      ▼  2) POST /generate  (промпт «восстановление»)
-                 ┌──────────┐
-                 │   llm    │   диаризация, восстановление, типы сообщений
-                 └────┬─────┘
-                      │ restored text
-          ┌───────────┴───────────────┐   3) параллельно (asyncio.gather)
-          ▼                           ▼
-     ┌──────────┐               ┌──────────┐
-     │   bert   │               │   llm    │  (промпт «классификация»)
-     │ /classify│               │ /generate│
-     │multi-label│              └────┬─────┘
-     └────┬─────┘                    │ llm_classification
-          │ bert_labels[]            │
-          └───────────┬──────────────┘
-                      ▼   4) master агрегирует и возвращает в gradio
+                 +----------+
+  audio -------> |  gradio  |   (UI: record/upload audio)
+                 +----+-----+
+                      | POST /process (multipart audio)
+                      v
+                 +----------+
+                 |  master  |
+                 +----+-----+
+                      | 1) POST /transcribe
+                      v
+                 +----------+
+                 |   asr    |   whisper-tiny -> transcript
+                 +----+-----+
+                      | transcript (over master)
+                      v  2) POST /generate  (prompt "restoration")
+                 +----------+
+                 |   llm    |   diarization, restoration, message types
+                 +----+-----+
+                      | restored text (over master)
+          +-----------+---------------+   3) parallel (asyncio.gather)
+          v                           v
+     +----------+               +----------+
+     |   bert   |               |   llm    |  (prompt "classification")
+     | /classify|               | /generate|
+     |multilabel|               +----+-----+
+     +----+-----+                    | llm_classification
+          | bert_labels[]            |
+          +-----------+--------------+
+                      v   4) master aggregates and returns to gradio
      { transcript, restored_text, bert_labels[], llm_classification }
 ```
 
-Ключевое: LLM вызывается **дважды** — сначала восстановление сырого транскрипта,
-потом классификация восстановленного текста (своим промптом). BERT классифицирует
-тот же восстановленный текст (multi-label). Оба результата уходят в gradio.
 
-## Стек
+## Stack
 
-- **FastAPI** + **uvicorn** — каждый сервис
-- **Pydantic v2** / **pydantic-settings** — схемы запросов/ответов и конфиг из env
-- **asyncio** + **aiohttp** — master делает конкурентные вызовы (BERT ‖ LLM)
-- **transformers** (CPU) или **vLLM** (GPU) — бэкенд LLM переключается конфигом
-- **батчинг запросов в LLM** — `asyncio.Queue` + фоновый воркер + `Future` на запрос
-- **gradio** — фронтенд
+- **FastAPI** + **uvicorn** — every service
+- **pydantic v2** / **pydantic-settings** — request/response schemas and config from env
+- **asyncio** + **aiohttp** — master issues concurrent calls (BERT || LLM)
+- **transformers** (CPU) or **vLLM** (GPU) — the LLM backend is switched by config
+- **request batching in the LLM** — `asyncio.Queue` + background worker + a `Future` per request
+- **gradio** — frontend
 
-## Батчинг в LLM-сервисе
 
-LLM-сервис не гоняет модель по одному запросу. Входящие промпты кладутся в
-`asyncio.Queue`, а фоновый воркер собирает **батч** и прогоняет его одним вызовом:
+## Implementation details
 
-- батч уходит в модель, когда набралось `LLM_MAX_BATCH_SIZE` **или** прошло
-  `LLM_BATCH_TIMEOUT_MS` с первого запроса в пачке (что раньше);
-- каждый HTTP-запрос ждёт свой `Future`, который воркер резолвит после инференса.
+#### Batching in the LLM service
 
-Код: [`batcher.py`](services/llm/app/batcher.py) (очередь + воркер) и
-[`backends.py`](services/llm/app/backends.py) (сменный бэкенд transformers/vLLM).
+Incoming prompts are put into an `asyncio.Queue`, and a background worker gathers a **batch** and runs it in a single call:
 
-## Модели по умолчанию (лёгкие, CPU)
+- the batch goes to the model once `LLM_MAX_BATCH_SIZE` is reached **or**
+  `LLM_BATCH_TIMEOUT_MS` has elapsed since the first request in the batch (whichever comes first);
+- each HTTP request awaits its own `Future`, which the worker resolves after inference.
 
-| Сервис | Модель | Меняется через env |
-|--------|--------|--------------------|
-| asr  | `openai/whisper-tiny` | `ASR_MODEL_NAME` |
-| bert | `SamLowe/roberta-base-go_emotions` (multi-label, 28 меток) | `BERT_MODEL_NAME`, `BERT_THRESHOLD` |
-| llm  | `google/flan-t5-small` | `LLM_MODEL_NAME` |
+Code: [`batcher.py`](services/llm/app/batcher.py) (queue + worker) and
+[`backends.py`](services/llm/app/backends.py) (swappable transformers/vLLM backend).
 
-Веса кэшируются в volume `hf-cache`, поэтому повторные запуски быстрые.
 
-## Запуск
+## Run
 
 ```bash
-cp .env.example .env        # при желании отредактируй модели
+cp .env.example .env
 ```
 
 ```bash
-# CPU (по умолчанию)
+# CPU (default)
 docker compose up --build
 
-# GPU для asr/bert/llm через transformers-CUDA
+# GPU for asr/bert/llm via transformers
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 
-# LLM на vLLM (GPU) — быстрый инференс
+# LLM on vLLM (GPU)
 docker compose -f docker-compose.yml -f docker-compose.vllm.yml up --build
 ```
 
-Первый старт качает веса моделей — health-check каждого ML-сервиса имеет
-`start_period: 120s`, master ждёт, пока все три станут healthy.
+**healthcheck**:
+The first start downloads the model weights of every ML service with a timeout `start_period: 120s`, 
+and master waits until all services become healthy.
 
-Открыть UI: <http://localhost:7860>
+**Ports**:
+Inside the network the services address each other by name: `http://asr:8000` and so on.
 
-## LLM на vLLM (опционально)
+Open the UI: <http://localhost:7860>
 
-Оверлей `docker-compose.vllm.yml` переключает **только llm-сервис** на бэкенд
-vLLM (`Dockerfile.vllm`), прокидывает GPU и меняет модель на causal/instruct
-(vLLM заточен под них):
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.vllm.yml up --build
-```
-
-Переключение бэкенда — через env `LLM_BACKEND` (`transformers` | `vllm`); код
-сервиса один и тот же, различается только реализация бэкенда в `backends.py`.
-**Требования:** NVIDIA GPU + драйвер + NVIDIA Container Toolkit.
-
-## Запуск на GPU через transformers (опционально)
-
-Оверлей `docker-compose.gpu.yml` пересобирает asr/bert/llm по `Dockerfile.gpu`
-(torch с CUDA) и прокидывает GPU. Код сам определяет устройство через
-`torch.cuda.is_available()` и переносит пайплайны на `cuda:0`.
+**Checking without gradio**:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
-```
-
-Проверка, что GPU виден Docker:
-
-```bash
-docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
-```
-
-## Порты
-
-| Сервис | Внутренний | Внешний | Endpoint |
-|--------|-----------|---------|----------|
-| gradio | 7860 | 7860 | UI |
-| master | 8000 | 8000 | `POST /process`, `GET /health` |
-| asr    | 8000 | 8001 | `POST /transcribe` |
-| bert   | 8000 | 8002 | `POST /classify` (multi-label) |
-| llm    | 8000 | 8003 | `POST /generate` (принимает `prompt`) |
-
-Внутри сети сервисы ходят по именам: `http://asr:8000` и т.д.
-
-## Проверка без gradio
-
-```bash
-# ASR — файл → текст
+# ASR - file -> text
 curl -F "audio=@sample.wav" http://localhost:8001/transcribe
 
-# BERT — multi-label классификация
+# BERT
 curl -X POST http://localhost:8002/classify \
-  -H "Content-Type: application/json" -d '{"text":"I love this, thank you so much!"}'
+  -H "Content-Type: application/json" -d '{"text":"classify this text"}'
 
-# LLM — принимает готовый prompt
+# LLM
 curl -X POST http://localhost:8003/generate \
-  -H "Content-Type: application/json" -d '{"prompt":"Classify: I am so happy today"}'
+  -H "Content-Type: application/json" -d '{"prompt":"classify this text"}'
 
-# Весь конвейер (audio -> ASR -> restore -> BERT ‖ LLM)
+# The whole pipeline (audio -> ASR -> restore -> BERT || LLM)
 curl -F "audio=@sample.wav" http://localhost:8000/process
 ```
 
-Или скрипт: `python scripts/smoke_test.py sample.wav` (нужны запущенные сервисы).
+Or the script: `python scripts/smoke_test.py sample.wav` (the services must be running).
 
-## Структура
+## Layout
 
 ```
 services/
-  asr/    app/{main,config,schemas,model}.py       — whisper → текст
-  bert/   app/{main,config,schemas,model}.py       — multi-label классификация
-  llm/    app/{main,config,schemas,backends,batcher}.py  — генерация + батчинг
-  master/ app/{main,config,schemas,prompts,clients}.py   — оркестрация + промпты
-  gradio/ app/{main,config,client}.py              — UI
-каждый сервис: Dockerfile (+ Dockerfile.gpu / Dockerfile.vllm), requirements.txt
+  asr/    app/{main,config,schemas,model}.py             - whisper -> text
+  bert/   app/{main,config,schemas,model}.py             - multi-label classification
+  llm/    app/{main,config,schemas,backends,batcher}.py  - generation + batching
+  master/ app/{main,config,schemas,prompts,clients}.py   - orchestration + prompts
+  gradio/ app/{main,config,client}.py                    - UI
+every service: Dockerfile (+ Dockerfile.gpu / Dockerfile.vllm), requirements.txt
 ```
